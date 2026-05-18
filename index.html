@@ -171,6 +171,12 @@ svg text{font-family:var(--font-sans);}
   <a href="#live">实盘操作流程</a>
   <a href="#gotchas">注意事项</a>
   <a href="#appendix">附录：因子预处理</a>
+  <a href="#appendix-missing" class="l2">缺失值处理</a>
+  <a href="#appendix-universe" class="l2">Universe 选取</a>
+  <a href="#appendix-industry" class="l2">行业分类标准</a>
+  <a href="#appendix-weights" class="l2">权重归一化</a>
+  <a href="#appendix-wls" class="l2">WLS vs OLS</a>
+  <a href="#appendix-cache" class="l2">本地缓存机制</a>
 </nav>
 
 <main>
@@ -525,6 +531,280 @@ factor_neutralized = <span class="fn">neutralize</span>(
     <strong>行业因子不走这套流程</strong> —— 行业因子是 0/1 虚拟变量（one-hot），本身已无量纲，不需要去极值或标准化。country 因子同理，直接用总仓位比例。
   </div>
 
+  <hr class="rule">
+
+  <h3 id="appendix-missing">缺失值处理</h3>
+
+  <p>归因计算链路中的每个环节对缺失值的处理策略不同，汇总如下：</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th>环节</th><th>处理方式</th><th>代码位置</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>持仓权重为 0</td>
+        <td>替换为 NaN，计算暴露时通过 <code>dropna()</code> 排除，不参与加权平均</td>
+        <td><code>attribution.py:120</code></td>
+      </tr>
+      <tr>
+        <td>风格因子值缺失</td>
+        <td><code>sum(axis=1, min_count=1)</code>：至少有一个有效值才返回结果，全部缺失才输出 NaN</td>
+        <td><code>attribution.py:185</code></td>
+      </tr>
+      <tr>
+        <td>行业暴露缺失</td>
+        <td><code>reindex(..., fill_value=0)</code>：当天未持有的行业暴露补 0（不持有即零暴露，语义正确）</td>
+        <td><code>attribution.py:219</code></td>
+      </tr>
+      <tr>
+        <td>缓存文件不存在</td>
+        <td>返回全 NaN 的空 DataFrame，保持索引结构不破坏后续计算，同时触发日志警告</td>
+        <td><code>factor_cache.py:231</code></td>
+      </tr>
+      <tr>
+        <td>中性化后残差为 NaN</td>
+        <td>可选 <code>fillna</code> 参数，用该股票所属行业的残差均值填充（适合数据覆盖不全的小票）</td>
+        <td><code>preprocess.py:293</code></td>
+      </tr>
+      <tr>
+        <td>截面 WLS 中因子值缺失</td>
+        <td>该股票从当日回归样本里直接剔除，不参与 beta 估计。全市场仍有几千只股票，影响可忽略</td>
+        <td>平台内部</td>
+      </tr>
+      <tr>
+        <td><code>neutralize</code> 中的 OLS 缺失</td>
+        <td>先用 <code>np.isfinite</code> 过滤有效索引，再传入 <code>missing='drop'</code> 双重保险，缺失观测完全剔除</td>
+        <td><code>preprocess.py:279–289</code></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout info">
+    <strong>缺失值不等于零暴露</strong> —— 风格因子暴露为 NaN 时，该股票不参与加权（分子分母都不计入），等价于把它从组合里剔除再算平均。如果改成填 0，会错误地把缺失数据当成「该因子暴露为零」，拉低组合暴露估计值。
+  </div>
+
+  <div class="callout">
+    <strong>缺失数据会虚增特异收益</strong> —— 某只股票当天因子值缺失时，它的暴露贡献为零，但它的实际收益仍然计入组合总收益。这部分收益无法被任何因子解释，全部落入 <code>specific_return</code>。因此，持有大量小票（数据覆盖差）的组合，特异收益会系统性偏高，不能直接等同于选股 alpha。
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="appendix-universe">Universe 选取</h3>
+
+  <p>截面 OLS 的样本范围（universe）决定了「用哪些股票来估计因子收益率」。代码里 <code>get_factor_style_returns</code> 硬编码了 <code>universe='zzqz'</code>（中证全指），即沪深两市全部 A 股。</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th>Universe</th><th>样本规模</th><th>适用场景</th><th>风险</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>zzqz</code> 中证全指</td><td>约 4000+ 只</td><td>全市场通用，因子收益率估计最稳定</td><td class="ok">推荐</td></tr>
+      <tr><td><code>hs300</code> 沪深300</td><td>300 只</td><td>大盘组合</td><td class="warn">size 因子收益率失真，小盘归因偏差大</td></tr>
+      <tr><td><code>zz500</code> 中证500</td><td>500 只</td><td>中盘组合</td><td class="warn">缺少极端小盘，size 溢价被低估</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>为什么 Universe 会影响因子收益率估计</h3>
+
+  <p>截面 OLS 每日估计的因子收益率（beta）是：</p>
+
+  <div class="math-block" id="eq-beta-decomp"></div>
+
+  <p>分母是 size 因子在当日截面上的方差，分子是 size 暴露与股票收益的协方差。<strong>Universe 的选择直接决定了这个方差的大小</strong>，进而影响 beta 的估计质量。</p>
+
+  <div class="diagram">
+  <svg width="640" height="240" viewBox="0 0 640 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- axes -->
+    <line x1="48" y1="150" x2="610" y2="150" stroke="#D1CFC5" stroke-width="1.5"/>
+    <line x1="48" y1="18"  x2="48"  y2="155" stroke="#D1CFC5" stroke-width="1.5"/>
+    <!-- y label -->
+    <text x="16" y="90" text-anchor="middle" font-size="11" fill="#87867F" transform="rotate(-90,16,90)">频率</text>
+    <!-- x label at very bottom -->
+    <text x="329" y="232" text-anchor="middle" font-size="11" fill="#87867F">size 因子暴露（左 = 小市值，右 = 大市值）</text>
+
+    <!-- zzqz wide bell -->
+    <path d="M62,148 Q130,145 175,118 Q215,90 255,55 Q295,26 330,22 Q365,26 405,55 Q445,90 485,118 Q530,145 590,148"
+          stroke="#788C5D" stroke-width="2" fill="rgba(120,140,93,.10)"/>
+    <!-- hs300 narrow bell (right, large cap) -->
+    <path d="M405,148 Q430,145 455,118 Q475,88 490,65 Q505,88 525,118 Q548,145 575,148"
+          stroke="#D97757" stroke-width="2" fill="rgba(217,119,87,.18)" stroke-dasharray="5,3"/>
+
+    <!-- zzqz label — upper left of its peak -->
+    <text x="210" y="42" font-size="12" fill="#788C5D" font-weight="600">zzqz 全市场</text>
+    <text x="210" y="57" font-size="10.5" fill="#87867F">大小盘都有，方差大</text>
+
+    <!-- HS300 label — upper right, above its peak -->
+    <text x="494" y="42" text-anchor="middle" font-size="12" fill="#D97757" font-weight="600">HS300</text>
+    <text x="494" y="57" text-anchor="middle" font-size="10.5" fill="#87867F">仅大盘，方差小</text>
+
+    <!-- bracket zzqz — sits just below x-axis -->
+    <line x1="70"  y1="162" x2="588" y2="162" stroke="#788C5D" stroke-width="1.5"/>
+    <line x1="70"  y1="158" x2="70"  y2="166" stroke="#788C5D" stroke-width="1.5"/>
+    <line x1="588" y1="158" x2="588" y2="166" stroke="#788C5D" stroke-width="1.5"/>
+    <text x="329" y="178" text-anchor="middle" font-size="10.5" fill="#788C5D">宽范围 → Var(X) 大 → beta 估计稳定</text>
+
+    <!-- bracket hs300 — one row below zzqz bracket -->
+    <line x1="413" y1="190" x2="572" y2="190" stroke="#D97757" stroke-width="1.5"/>
+    <line x1="413" y1="186" x2="413" y2="194" stroke="#D97757" stroke-width="1.5"/>
+    <line x1="572" y1="186" x2="572" y2="194" stroke="#D97757" stroke-width="1.5"/>
+    <text x="493" y="208" text-anchor="middle" font-size="10.5" fill="#D97757">窄范围 → Var(X) 小 → beta 不稳定</text>
+  </svg>
+  </div>
+
+  <h3>HS300 Universe 的两个具体问题</h3>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>问题一：beta 估计不稳定</h4>
+      <p>HS300 全是大市值，size 值挤在高端，截面方差很小。分母变小导致 beta 数值放大且对噪声更敏感——同样的 Cov，分母缩小一倍，beta 就翻倍，但这个 beta 不代表真实溢价，只是数值偶然变大了。</p>
+    </div>
+    <div class="card">
+      <h4>问题二：beta 含义失真</h4>
+      <p>HS300 估出的 size 因子收益率描述的是「大盘内部，相对大一点 vs 相对小一点的收益差」，而不是「大盘 vs 小盘的真实溢价」。用这个 beta 归因小盘组合，就像用北京天气预报预测上海气温。</p>
+    </div>
+  </div>
+
+  <h3>对小盘组合的实际影响</h3>
+
+  <p>归因等式是：</p>
+
+  <div class="math-block" id="eq-attr-size"></div>
+
+  <p>当 universe 选错时，<strong>两边都会出问题</strong>：</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th></th><th>zzqz（正确）</th><th>HS300（错误）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>size 因子收益率 <span id="inline-beta-size-1"></span></td>
+        <td>捕捉到真实的小盘溢价，含义明确</td>
+        <td>只反映大盘内部差异，与小盘溢价无关</td>
+      </tr>
+      <tr>
+        <td>size 贡献归因</td>
+        <td>准确反映组合的 size 下注收益</td>
+        <td>size 贡献被严重低估或方向错误</td>
+      </tr>
+      <tr>
+        <td><code>specific_return</code></td>
+        <td>真实的选股 alpha</td>
+        <td>虚高——size 没解释到的部分全堆进来了</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <strong>一个直觉例子</strong> —— 假设某天小盘股整体涨了 3%，大盘股涨了 1%。你持有小盘组合，size 暴露为 −0.8（相对基准）。<br><br>
+    用 zzqz 估出的 size 因子收益率能捕捉到这 2% 的大小盘价差，归因结果：size 贡献 ≈ −0.8 × (−2%) = +1.6%（做空大盘获益）。<br><br>
+    用 HS300 估出的 size 因子收益率只看大盘内部差异，可能只有 0.1%，归因结果：size 贡献 ≈ −0.8 × (−0.1%) = +0.08%，剩下的 1.5% 全跑到 <code>specific_return</code> 里，让选股能力看起来虚高。
+  </div>
+
+  <div class="callout info">
+    <strong>这是已知局限，没有通用解法</strong> —— 理论上应该用「与组合最接近的 universe」来估计因子收益率，但实际上很难界定边界，且会引入另一种选择性偏差。工程上的折中是始终用 zzqz，并在解读 <code>specific_return</code> 时结合组合的市值分布一起判断。
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="appendix-industry">行业分类标准</h3>
+
+  <p>初始化 <code>AttributionAnalysis</code> 时的 <code>industry</code> 参数决定了行业因子的粒度。</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4><code>sw_l1</code> — 申万一级行业（默认）</h4>
+      <p>31 个行业，覆盖最广，行业划分与主流研究报告一致，适合大多数组合。行业归因结果可读性强。</p>
+    </div>
+    <div class="card">
+      <h4><code>jq_l1</code> — 聚宽一级行业</h4>
+      <p>19 个行业，粒度更粗。行业数少意味着行业虚拟变量矩阵更小，截面 OLS 自由度略高，但行业归因细节会被合并。</p>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <strong>行业分类会跨期变化</strong> —— 股票的行业归属不是固定的（如重组、主业转移），代码在初始化时取分析期<strong>首尾两日</strong>的行业列表取并集（<code>attribution.py:126</code>），确保新老行业代码都被覆盖，不会因为行业调整导致某天暴露为 NaN。
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="appendix-weights">权重归一化</h3>
+
+  <p>当某日持仓权重之和超过 1（如杠杆或数据误差），代码自动归一化，同时影响 country 暴露的计算：</p>
+
+  <pre class="code-block"><span class="cm"># attribution.py:119-120</span>
+weights.loc[weights.sum(axis=1) > 1] = weights.div(weights.sum(axis=1), axis=0)
+<span class="cm"># 归一化后权重之和 = 1，country 暴露 = 1，视为满仓，不产生现金项</span></pre>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th>权重之和</th><th>country 暴露</th><th>归因中的现金项</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>= 1（满仓）</td><td>1.0</td><td>0（无现金拖累）</td></tr>
+      <tr><td>&lt; 1（部分仓位）</td><td>&lt; 1，等于实际仓位比例</td><td>非零，牛市为负（持现金跑输指数）</td></tr>
+      <tr><td>&gt; 1（自动归一化后）</td><td>归一化至 1.0</td><td>0</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="appendix-wls">WLS vs OLS</h3>
+
+  <p>平台内部的截面回归实际上是<strong>加权最小二乘（WLS）</strong>，而非等权 OLS，权重为每只股票总市值的平方根：</p>
+
+  <div class="math-block" id="eq-wls"></div>
+  <ul class="var-list" id="vars-wls"></ul>
+
+  <div class="callout info">
+    <strong>为什么用市值加权？</strong> —— 等权 OLS 会让数量众多的小市值股票主导回归结果，而小票的收益噪声更大、因子值质量更差。用 <span class="badge badge-b">√市值</span> 加权后，大市值股票对 beta 估计的贡献更大，因子收益率更能反映「可投资」市场的真实情况，也更符合实盘中以市值衡量的经济重要性。
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="appendix-cache">本地缓存机制</h3>
+
+  <p>第一次运行归因分析时，代码会从平台拉取因子数据并写入本地缓存，后续只增量补充缺失日期，大幅减少 API 调用。</p>
+
+  <div class="callout info">
+    <strong>缓存目录</strong> —— 默认存放在 <code>~/jqfactor_datacache/bundle/</code>，可通过 <code>set_cache_dir(path)</code> 修改。
+  </div>
+
+  <p>目录结构按因子组和月份组织，每天一个 Feather 文件：</p>
+
+  <pre class="code-block">~/jqfactor_datacache/bundle/
+└── jqfactor_cache_&lt;md5&gt;/        <span class="cm"># 因子组（由因子名列表的 MD5 确定）</span>
+    ├── 202401/
+    │   ├── 20240102.feather      <span class="cm"># 每个交易日一个文件</span>
+    │   ├── 20240103.feather      <span class="cm"># 行 = 股票代码，列 = 各因子值</span>
+    │   └── ...
+    └── 202402/
+        └── ...</pre>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th>机制</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>格式</td><td>Apache Feather（列式存储），读取速度远快于 CSV，支持 NaN</td></tr>
+      <tr><td>因子组识别</td><td>用因子名列表排序后的 MD5 哈希命名文件夹，同一组因子共用缓存，顺序无关</td></tr>
+      <tr><td>增量更新</td><td>按月检查：对比已有文件的日期与交易日列表，只下载缺失的连续片段</td></tr>
+      <tr><td>文件损坏恢复</td><td>读取异常时自动重新下载当天数据，写入日志警告</td></tr>
+      <tr><td>全 NaN 日期跳过</td><td>数据全为 NaN 的交易日（如停牌日）不写入文件，读取时返回空 DataFrame</td></tr>
+    </tbody>
+  </table>
+  </div>
+
 </main>
 </div>
 
@@ -712,6 +992,29 @@ varList('vars-neutralize', [
 display('eq-zscore',
   String.raw`x_i^{*} \;=\; \frac{x_i^{\text{neu}} - \bar{x}}{\sigma_x}`
 );
+
+display('eq-beta-decomp',
+  String.raw`\hat{\beta}_{\text{size}}(t) \;=\; \frac{\text{Cov}\!\bigl(r(t+1),\; X_{\text{size}}(t)\bigr)}{\text{Var}\!\bigl(X_{\text{size}}(t)\bigr)}`
+);
+
+display('eq-attr-size',
+  String.raw`\underbrace{\text{attr}_{\text{size}}}_{\text{size 归因收益}} \;=\; \underbrace{E_{\text{size}}^{\text{portfolio}}}_{\text{组合 size 暴露}} \;\times\; \underbrace{\hat{\beta}_{\text{size}}}_{\text{因子收益率（受 universe 影响）}}`
+);
+
+// inline label
+(function(){
+  const el = document.getElementById('inline-beta-size-1');
+  if(el) el.innerHTML = katex.renderToString('\\hat{\\beta}_{\\text{size}}', {throwOnError:false});
+})();
+
+display('eq-wls',
+  String.raw`\hat{\boldsymbol{\beta}}_{\text{WLS}} \;=\; \bigl(\mathbf{X}^\top \mathbf{W} \mathbf{X}\bigr)^{-1} \mathbf{X}^\top \mathbf{W}\, \mathbf{r}, \qquad w_i = \sqrt{\text{MarketCap}_i}`
+);
+varList('vars-wls', [
+  {sym: '\\mathbf{W}',                    desc: 'N×N 对角权重矩阵，对角元素为各股票的权重 w_i'},
+  {sym: 'w_i = \\sqrt{\\text{MarketCap}_i}', desc: '股票 i 的回归权重，取总市值的平方根，使大市值股票影响力更高但不至于完全主导'},
+  {sym: '\\hat{\\boldsymbol{\\beta}}_{\\text{WLS}}', desc: 'WLS 估计的因子收益率，即代码中的 factor_returns'},
+]);
 
 // ── auto-render inline math in callouts ──────────────────────────────────
 renderMathInElement(document.body, {
