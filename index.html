@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>归因分析详解 · jqfactor_analyzer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<style>
+:root {
+  --clay:#D97757; --clay-d:#B85C3E;
+  --olive:#788C5D; --slate:#141413;
+  --oat:#E3DACC; --ivory:#FAF9F5;
+  --white:#FFFFFF; --rust:#B04A3F;
+  --info:#5C7CA3;
+  --gray-100:#F0EEE6; --gray-300:#D1CFC5;
+  --gray-500:#87867F; --gray-700:#3D3D3A;
+  --r-card:14px; --r-panel:12px; --r-row:8px;
+  --font-serif:ui-serif,Georgia,"Times New Roman",serif;
+  --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Monaco,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--ivory);color:var(--slate);font:400 15px/1.6 var(--font-sans);
+     padding:56px 24px 120px;-webkit-font-smoothing:antialiased;}
+.page{max-width:1100px;margin:0 auto;display:grid;
+      grid-template-columns:200px minmax(0,1fr);gap:48px;}
+@media(max-width:920px){.page{grid-template-columns:1fr;}nav{display:none;}}
+@media(max-width:640px){body{padding:32px 16px 80px;}}
+
+/* nav */
+nav{position:sticky;top:32px;align-self:start;font-size:13px;}
+nav .label{font:500 10px/1.4 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+            color:var(--gray-500);margin-bottom:12px;}
+nav a{display:block;padding:5px 0 5px 12px;border-left:2px solid var(--gray-300);
+      color:var(--gray-700);text-decoration:none;transition:color .12s,border-color .12s;}
+nav a:hover,nav a.active{color:var(--slate);border-color:var(--slate);}
+nav a.l2{padding-left:24px;font-size:12px;color:var(--gray-500);}
+
+/* header */
+.eyebrow{font:500 11px/1.4 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+          color:var(--gray-500);margin-bottom:10px;}
+h1{font:500 clamp(28px,4vw,38px)/1.2 var(--font-serif);color:var(--slate);
+   letter-spacing:-.01em;margin:8px 0 20px;}
+h2{font:500 22px/1.3 var(--font-serif);color:var(--slate);margin:52px 0 14px;}
+h3{font:600 15px/1.4 var(--font-sans);color:var(--slate);margin:28px 0 10px;}
+p{margin-bottom:12px;max-width:700px;color:var(--gray-700);}
+
+/* tldr */
+.tldr{border:1.5px solid var(--gray-300);border-left:3px solid var(--clay);
+      border-radius:10px;background:var(--white);padding:16px 20px;margin-bottom:32px;}
+.tldr strong{color:var(--clay);}
+
+/* callout */
+.callout{border-left:3px solid var(--clay);background:rgba(217,119,87,.06);
+         padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;}
+.callout.info{border-color:var(--info);background:rgba(92,124,163,.07);}
+.callout.success{border-color:var(--olive);background:rgba(120,140,93,.07);}
+.callout strong{color:var(--clay);}
+.callout.info strong{color:var(--info);}
+.callout.success strong{color:var(--olive);}
+
+/* math block */
+.math-block{background:var(--white);border:1.5px solid var(--gray-300);
+            border-radius:var(--r-panel);padding:20px 28px;margin:14px 0;
+            overflow-x:auto;}
+.math-block .katex-display{margin:0;}
+.math-block .katex-display > .katex{font-size:1.1em;}
+
+/* math block with label */
+.math-label{font:500 11px/1 var(--font-mono);text-transform:uppercase;
+             letter-spacing:.08em;color:var(--gray-500);margin-bottom:10px;}
+
+/* multi-equation block */
+.math-group{background:var(--white);border:1.5px solid var(--gray-300);
+            border-radius:var(--r-panel);padding:20px 28px;margin:14px 0;}
+.math-group .eq-row{display:flex;align-items:baseline;gap:12px;padding:6px 0;
+                    border-bottom:1px solid var(--gray-100);}
+.math-group .eq-row:last-child{border-bottom:none;}
+.math-group .eq-note{font-size:13px;color:var(--gray-500);white-space:nowrap;}
+
+/* code block (Python) */
+pre.code-block{background:var(--slate);color:#E8E6DE;padding:18px 22px;
+               border-radius:var(--r-panel);font:400 12.5px/1.7 var(--font-mono);
+               overflow-x:auto;margin:12px 0;}
+pre.code-block .cm{color:var(--gray-500);}
+pre.code-block .kw{color:#C9B98A;}
+pre.code-block .st{color:#9DC98A;}
+pre.code-block .fn{color:#D97757;}
+
+/* code inline */
+code{font:13px/1 var(--font-mono);padding:1px 6px;background:var(--gray-100);
+     border-radius:4px;color:var(--clay-d);}
+
+/* step list */
+.steps{list-style:none;margin:16px 0 20px;padding:0;}
+.steps li{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--gray-100);}
+.steps li:last-child{border-bottom:none;}
+.step-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;
+          background:var(--clay);color:#fff;font:700 13px/1 var(--font-mono);
+          display:flex;align-items:center;justify-content:center;}
+.step-body{flex:1;}
+.step-body strong{color:var(--slate);font-weight:600;}
+
+/* table */
+.tbl-wrap{overflow-x:auto;margin:16px 0;}
+table{border-collapse:collapse;width:100%;font-size:14px;}
+th{font:600 12px/1 var(--font-mono);text-transform:uppercase;letter-spacing:.07em;
+   color:var(--gray-500);padding:8px 12px;border-bottom:2px solid var(--gray-300);text-align:left;}
+td{padding:10px 12px;border-bottom:1px solid var(--gray-100);color:var(--gray-700);}
+tr:hover td{background:rgba(217,119,87,.04);}
+td.ok{color:var(--olive);font-weight:600;}
+td.warn{color:var(--rust);font-weight:600;}
+
+/* svg diagram */
+.diagram{margin:20px 0;overflow-x:auto;}
+svg text{font-family:var(--font-sans);}
+
+/* badge */
+.badge{display:inline-flex;align-items:center;height:22px;padding:0 9px;
+       border-radius:999px;font:500 11.5px/1 var(--font-mono);}
+.badge-y{background:rgba(217,119,87,.14);color:var(--clay);}
+.badge-x{background:rgba(92,124,163,.14);color:var(--info);}
+.badge-b{background:rgba(120,140,93,.16);color:var(--olive);}
+.badge-r{background:rgba(176,74,63,.12);color:var(--rust);}
+
+/* two-col grid */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0;}
+@media(max-width:640px){.grid2{grid-template-columns:1fr;}}
+.card{background:var(--white);border:1.5px solid var(--gray-300);border-radius:var(--r-card);padding:18px 20px;}
+.card h4{font:600 14px/1 var(--font-sans);color:var(--slate);margin-bottom:8px;}
+.card p{font-size:13.5px;margin:0;color:var(--gray-500);max-width:none;}
+
+/* rule */
+.rule{border:none;border-top:1.5px solid var(--gray-300);margin:48px 0 0;}
+
+/* variable definition list */
+.var-list{margin:12px 0 16px;padding:0;list-style:none;
+          border-left:2px solid var(--gray-300);padding-left:16px;}
+.var-list li{display:flex;align-items:baseline;gap:10px;padding:5px 0;
+             border-bottom:1px solid var(--gray-100);font-size:14px;}
+.var-list li:last-child{border-bottom:none;}
+.var-list .sym{flex-shrink:0;min-width:180px;}
+.var-list .desc{color:var(--gray-700);line-height:1.5;}
+.var-list .tag{display:inline-block;font:500 10.5px/1 var(--font-mono);
+               padding:1px 7px;border-radius:4px;margin-left:6px;vertical-align:middle;}
+.tag-y{background:rgba(217,119,87,.14);color:var(--clay);}
+.tag-x{background:rgba(92,124,163,.14);color:var(--info);}
+.tag-b{background:rgba(120,140,93,.16);color:var(--olive);}
+.tag-r{background:rgba(176,74,63,.12);color:var(--rust);}
+
+/* copy btn */
+.copy-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;
+          background:var(--white);border:1.5px solid var(--gray-300);border-radius:var(--r-row);
+          font:500 12.5px/1 var(--font-sans);color:var(--gray-700);cursor:pointer;
+          transition:background .12s,border-color .12s;margin-top:12px;}
+.copy-btn:hover{background:var(--gray-100);border-color:var(--slate);}
+.copy-btn.copied{background:rgba(120,140,93,.15);border-color:var(--olive);color:var(--olive);}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- sidebar -->
+<nav>
+  <div class="label">目录</div>
+  <a href="#overview">总览</a>
+  <a href="#ols" class="l2">OLS 截面回归</a>
+  <a href="#exposure">暴露计算</a>
+  <a href="#attribution">归因分解</a>
+  <a href="#bench">相对基准归因</a>
+  <a href="#live">实盘操作流程</a>
+  <a href="#gotchas">注意事项</a>
+  <a href="#appendix">附录：因子预处理</a>
+</nav>
+
+<main>
+  <div class="eyebrow">技术说明 · jqfactor_analyzer · 归因分析</div>
+  <h1>归因分析：原理与实盘做法</h1>
+
+  <div class="tldr">
+    <strong>TL;DR</strong> —— 归因分析回答「组合今天赚的钱，有多少来自风格因子，多少来自行业，多少是我主动选股带来的」。核心思路：先用每日截面 OLS 算出各因子当天的「收益率」，再乘以组合对该因子的暴露，就得到组合从该因子获得的收益；剩下无法解释的部分就是特异收益。
+  </div>
+
+  <!-- ① overview -->
+  <h2 id="overview">① 整体流程一览</h2>
+
+  <div class="diagram">
+  <svg width="680" height="180" viewBox="0 0 680 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="10"  y="60" width="130" height="60" rx="10" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="180" y="60" width="130" height="60" rx="10" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="350" y="60" width="140" height="60" rx="10" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="530" y="28" width="140" height="44" rx="10" fill="rgba(120,140,93,.12)" stroke="#788C5D" stroke-width="1.5"/>
+    <rect x="530" y="108" width="140" height="44" rx="10" fill="rgba(217,119,87,.10)" stroke="#D97757" stroke-width="1.5"/>
+    <line x1="140" y1="90" x2="178" y2="90" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="310" y1="90" x2="348" y2="90" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="490" y1="75" x2="528" y2="58" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="490" y1="105" x2="528" y2="128" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#arr)"/>
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#87867F"/>
+      </marker>
+    </defs>
+    <text x="75"  y="84" text-anchor="middle" font-size="12.5" fill="#3D3D3A">截面 OLS</text>
+    <text x="75"  y="102" text-anchor="middle" font-size="11" fill="#87867F">算因子收益率</text>
+    <text x="245" y="84" text-anchor="middle" font-size="12.5" fill="#3D3D3A">暴露计算</text>
+    <text x="245" y="102" text-anchor="middle" font-size="11" fill="#87867F">权重 × 因子值</text>
+    <text x="420" y="84" text-anchor="middle" font-size="12.5" fill="#3D3D3A">归因分解</text>
+    <text x="420" y="102" text-anchor="middle" font-size="11" fill="#87867F">暴露 × 因子收益率</text>
+    <text x="600" y="45" text-anchor="middle" font-size="12" fill="#788C5D" font-weight="600">因子收益</text>
+    <text x="600" y="60" text-anchor="middle" font-size="10.5" fill="#87867F">风格 + 行业</text>
+    <text x="600" y="125" text-anchor="middle" font-size="12" fill="#D97757" font-weight="600">特异收益</text>
+    <text x="600" y="141" text-anchor="middle" font-size="10.5" fill="#87867F">总收益 − 因子收益</text>
+    <text x="75"  y="150" text-anchor="middle" font-size="10" fill="#87867F">全市场股票</text>
+    <text x="245" y="150" text-anchor="middle" font-size="10" fill="#87867F">T 日收盘</text>
+    <text x="420" y="150" text-anchor="middle" font-size="10" fill="#87867F">T+1 日</text>
+  </svg>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>截面 OLS</strong> —— 每个交易日，用全市场股票当天的因子暴露（X）和次日收益率（Y）做横截面回归，得到各因子的「收益率」（beta）。由平台 API <code>get_factor_style_returns()</code> 完成。</div>
+    </li>
+    <li>
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>计算组合暴露</strong> —— 用组合持仓权重加权平均个股因子值，得到组合在每个因子上的整体暴露。T 日收盘后计算，对应 T+1 日的收益。</div>
+    </li>
+    <li>
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>归因分解</strong> —— 组合因子收益 = 组合暴露（T 日）× 因子收益率（T+1 日）；特异收益 = 总收益 − 所有因子收益之和。</div>
+    </li>
+  </ol>
+
+  <hr class="rule">
+
+  <!-- ② OLS -->
+  <h2 id="ols">② 截面 OLS：算出因子收益率</h2>
+
+  <p>这是整个归因体系的<strong>基础</strong>。每个交易日，在全市场做一次横截面回归，把个股次日收益率「解释」成各风格因子的线性组合。</p>
+
+  <div class="callout info">
+    <strong>OLS 变量说明</strong><br><br>
+    <span class="badge badge-x">X（解释变量）</span> &nbsp;每只股票在该日的因子暴露矩阵。行 = 股票，列 = 各风格/行业因子（已标准化）。<br><br>
+    <span class="badge badge-y">Y（被解释变量）</span> &nbsp;每只股票在<strong>次日（T+1）</strong>的收益率向量。<br><br>
+    <span class="badge badge-b">β（回归系数 / beta）</span> &nbsp;各因子的「收益率」，即因子在该日多赚（或亏）了多少。这就是 <code>factor_returns</code>。<br><br>
+    <span class="badge badge-r">残差 ε</span> &nbsp;每只股票无法被因子解释的部分，即个股的选股 alpha。
+  </div>
+
+  <p>对每个交易日 <em>t</em>，独立做一次截面回归：</p>
+
+  <div class="math-block" id="eq-ols-scalar"></div>
+
+  <ul class="var-list" id="vars-ols-scalar"></ul>
+
+  <p>写成矩阵形式（行 = 股票，列 = 因子）：</p>
+
+  <div class="math-group" id="eq-ols-matrix"></div>
+  <ul class="var-list" id="vars-ols-matrix"></ul>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>X 的维度</h4>
+      <p>行 = 全市场 N 只股票（通常几千只）<br>列 = 因子数量（风格 16 个 + 行业 30+ 个 + country 1 个）</p>
+    </div>
+    <div class="card">
+      <h4>Y 的维度</h4>
+      <p>长度为 N 的列向量，即每只股票 T+1 日的实际收益率（次日涨跌幅）</p>
+    </div>
+    <div class="card">
+      <h4>β 的含义</h4>
+      <p>每个因子在这一天的「收益贡献率」。例如 size 的 β = 0.2%，表示 size 因子这天贡献了 0.2% 的收益</p>
+    </div>
+    <div class="card">
+      <h4>残差的含义</h4>
+      <p>个股被因子解释不了的那部分收益。聚合到组合层面就是组合的「特异收益」</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>实盘注意</strong> 这一步的 OLS 并非在 <code>AttributionAnalysis</code> 类里手动实现，而是通过平台 API <code>get_factor_style_returns()</code> 获得已算好的 <code>factor_returns</code>（每日每因子的收益率 DataFrame）。平台内部使用的是加权最小二乘（WLS），以市值平方根为权重，使大市值股票有更高影响力。
+  </div>
+
+  <hr class="rule">
+
+  <!-- ③ exposure -->
+  <h2 id="exposure">③ 计算组合的因子暴露</h2>
+
+  <p>暴露回答「我的组合在哪些因子上押注了多少」。计算方法非常直接：<strong>持仓加权平均</strong>。</p>
+
+  <div class="math-block" id="eq-exposure"></div>
+  <ul class="var-list" id="vars-exposure"></ul>
+
+  <h3>country 暴露</h3>
+  <p>country 暴露比较特殊，不是因子值加权，而是直接等于<strong>总持仓比例</strong>（所有股票权重之和）。如果仓位 80%，则 country 暴露 = 0.8，剩余 20% 视为现金。</p>
+
+  <div class="math-block" id="eq-country"></div>
+
+  <hr class="rule">
+
+  <!-- ④ attribution -->
+  <h2 id="attribution">④ 归因分解：拆解收益来源</h2>
+
+  <p>有了因子收益率和组合暴露，归因分解就是一次简单的乘法：</p>
+
+  <div class="math-group" id="eq-attr-daily"></div>
+  <ul class="var-list" id="vars-attr-daily"></ul>
+
+  <div class="callout success">
+    <strong>为什么暴露要用 T 日而不是 T+1 日？</strong><br>
+    因为我们用的是 <strong>T 日收盘后的暴露</strong>来解释 <strong>T+1 日的收益</strong>。代码里用 <code>.shift(1)</code> 实现时序对齐，不产生未来信息泄漏。
+  </div>
+
+  <h3>累积归因收益</h3>
+  <p>日收益简单累加有复利误差，正确做法是用当日净值作为权重放大日收益：</p>
+
+  <div class="math-group" id="eq-cum-attr"></div>
+  <ul class="var-list" id="vars-cum-attr"></ul>
+
+  <hr class="rule">
+
+  <!-- ⑤ bench -->
+  <h2 id="bench">⑤ 相对基准的归因（超额收益归因）</h2>
+
+  <p>实盘中更常用的是<strong>相对于基准（如中证500）的超额收益归因</strong>，分析超额收益哪些来自因子暴露偏差，哪些是真正的选股能力。</p>
+
+  <div class="math-group" id="eq-bench"></div>
+  <ul class="var-list" id="vars-bench"></ul>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr><th>收益项</th><th>含义</th><th>能人为控制？</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>common_return</code></td><td>所有风格 + 行业因子贡献之和</td><td class="warn">被动暴露</td></tr>
+      <tr><td>单因子（如 <code>size</code>）</td><td>组合相对基准在该因子的超额暴露带来的收益</td><td class="warn">部分可控</td></tr>
+      <tr><td><code>cash</code></td><td>仓位不满（或超仓）相对指数满仓的损益</td><td class="ok">可控</td></tr>
+      <tr><td><code>specific_return</code></td><td>无法被因子和仓位解释的残差收益 = 真正的选股 alpha</td><td class="ok">主动管理</td></tr>
+      <tr><td><code>total_return</code></td><td>= 组合收益 − 基准收益（超额收益）</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="rule">
+
+  <!-- ⑥ live -->
+  <h2 id="live">⑥ 实盘操作流程（一步一步）</h2>
+
+  <div class="callout">
+    <strong>前提</strong> 需要有聚宽 JQData 账号或 jqdata 云端权限，<code>AttributionAnalysis</code> 会自动从平台拉取因子值和因子收益率。
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <strong>准备持仓权重 DataFrame</strong><br>
+        <code>index=日期, columns=股票代码, values=持仓权重（0~1）</code>。每行之和 ≤ 1；超过 1 时系统会自动归一化。缺仓部分记为现金。
+      </div>
+    </li>
+    <li>
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <strong>准备日收益率 Series</strong><br>
+        <code>index=日期, values=组合当日收益率（小数）</code>。这是账户层面的真实总收益，不是模拟。
+      </div>
+    </li>
+    <li>
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <strong>初始化 AttributionAnalysis</strong>
+        <pre class="code-block"><span class="fn">an</span> = AttributionAnalysis(
+    <span class="kw">weights</span>=weights,          <span class="cm"># 日度持仓权重 DataFrame</span>
+    <span class="kw">daily_return</span>=returns,     <span class="cm"># 日度账户收益 Series</span>
+    <span class="kw">style_type</span>=<span class="st">'style_pro'</span>,   <span class="cm"># 使用哪套风格因子</span>
+    <span class="kw">industry</span>=<span class="st">'sw_l1'</span>          <span class="cm"># 行业分类标准</span>
+)</pre>
+        初始化时自动完成：① 缓存因子值到本地，② 计算组合风格暴露，③ 计算行业暴露。
+      </div>
+    </li>
+    <li>
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <strong>查看组合自身归因</strong>
+        <pre class="code-block"><span class="cm"># 日级别归因收益（不含基准对比）</span>
+<span class="fn">an</span>.attr_daily_returns   <span class="cm"># DataFrame：各因子的日收益贡献</span>
+<span class="fn">an</span>.attr_returns         <span class="cm"># DataFrame：累积归因收益</span></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <strong>查看相对基准的归因（实盘常用）</strong>
+        <pre class="code-block"><span class="cm"># 超额收益归因（对比中证500）</span>
+<span class="fn">attr_df</span> = <span class="fn">an</span>.get_attr_returns2bench(<span class="st">"000905.XSHG"</span>)
+
+<span class="fn">attr_df</span>[<span class="st">'common_return'</span>]   <span class="cm"># 来自风格+行业因子的超额收益</span>
+<span class="fn">attr_df</span>[<span class="st">'specific_return'</span>] <span class="cm"># 选股 alpha（无法被因子解释的部分）</span>
+<span class="fn">attr_df</span>[<span class="st">'cash'</span>]            <span class="cm"># 来自仓位不满的损益</span>
+<span class="fn">attr_df</span>[<span class="st">'total_return'</span>]    <span class="cm"># 超额收益总计</span></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <strong>可视化</strong>
+        <pre class="code-block"><span class="cm"># 查看风格暴露随时间的变化（相对基准）</span>
+<span class="fn">an</span>.plot_exposure(factors=<span class="st">'style'</span>, index_symbol=<span class="st">"000905.XSHG"</span>)
+
+<span class="cm"># 将因子暴露与归因收益同时绘制</span>
+<span class="fn">an</span>.plot_exposure_and_returns(factors=[<span class="st">'size'</span>, <span class="st">'momentum'</span>])</pre>
+      </div>
+    </li>
+  </ol>
+
+  <hr class="rule">
+
+  <!-- ⑦ gotchas -->
+  <h2 id="gotchas">⑦ 注意事项 &amp; 常见误区</h2>
+
+  <div class="callout">
+    <strong>T 日暴露 vs T+1 日收益</strong> —— 一定要用 <strong>T 日收盘后</strong>计算的暴露来解释 <strong>T+1 日的收益</strong>。代码里用 <code>.shift(1)</code> 实现。如果不 shift，相当于用未来暴露解释当日收益，逻辑错误。
+  </div>
+  <div class="callout info">
+    <strong>因子收益率不是你自己算的</strong> —— <code>factor_returns</code> 通过 <code>get_factor_style_returns()</code> 从平台获取，内部是全市场截面 WLS 的结果（以市值加权）。你的组合规模再大，也不会影响这个数字。
+  </div>
+  <div class="callout info">
+    <strong>特异收益 ≠ 选股能力</strong> —— <code>specific_return</code> 是「模型无法解释的残差」。如果你的组合里有因子模型覆盖不全的行业或小市值股票，这部分也会被归入特异收益。只有在因子覆盖充分的前提下，特异收益才接近真实选股能力。
+  </div>
+  <div class="callout">
+    <strong>累积收益的加总有复利误差</strong> —— 日收益直接加总会低估（多头）或高估（空头）真实累积收益。代码用 <span id="inline-nav">\(\text{attr}_k(t) \times \text{NAV}(t-1)\)</span> 再累加的方式近似复利修正。如需精确，应按净值曲线反推。
+  </div>
+  <div class="callout info">
+    <strong>仓位不满时的 country 收益</strong> —— country 因子代表「持有股票」本身带来的系统性收益（市场 β）。如果相对基准仓位低 20%，这 20% 的现金相当于空了指数，在牛市里会拖累超额收益，体现为 <code>cash</code> 为负。
+  </div>
+
+  <div style="margin-top:40px;padding-top:24px;border-top:1px solid var(--gray-300);">
+    <div class="eyebrow" style="margin-bottom:8px;">参考文件</div>
+    <p style="font-size:13px;color:var(--gray-500);margin:0;">
+      <code>jqfactor_analyzer/attribution.py</code> — 归因分析核心实现<br>
+      <code>jqfactor_analyzer/preprocess.py</code> — 因子预处理工具<br>
+      <code>tests/test_attribution.py</code> — 测试与用法示例
+    </p>
+    <button class="copy-btn" onclick="copyTldr(this)">复制 TL;DR 摘要</button>
+  </div>
+
+  <hr class="rule">
+
+  <!-- ── 附录 ── -->
+  <h2 id="appendix">附录：因子预处理（<code>preprocess.py</code>）</h2>
+
+  <p>归因分析使用的因子暴露矩阵 <strong>X</strong> 并不是原始财务数据，而是经过一套标准化流程处理后的值。<code>preprocess.py</code> 提供的四个函数，正是这套流程在本库中的实现，供你在把自有因子传入归因体系<strong>之前</strong>使用。</p>
+
+  <div class="callout info">
+    <strong>在哪里用？</strong> 如果你有自己计算的原始因子（如自定义的动量、质量因子），在传给 <code>AttributionAnalysis</code> 或做截面 OLS 之前，应该先走完这套预处理流程，否则量纲不统一、异常值会严重扭曲回归结果。对于 JQData 平台内置的 Barra 风格因子，平台已在内部完成这些步骤，无需重复处理。
+  </div>
+
+  <!-- pipeline diagram -->
+  <div class="diagram">
+  <svg width="640" height="72" viewBox="0 0 640 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4"   y="16" width="110" height="40" rx="8" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="148" y="16" width="110" height="40" rx="8" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="292" y="16" width="110" height="40" rx="8" fill="#FAF9F5" stroke="#D1CFC5" stroke-width="1.5"/>
+    <rect x="436" y="16" width="160" height="40" rx="8" fill="rgba(120,140,93,.10)" stroke="#788C5D" stroke-width="1.5"/>
+    <line x1="114" y1="36" x2="146" y2="36" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#a2)"/>
+    <line x1="258" y1="36" x2="290" y2="36" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#a2)"/>
+    <line x1="402" y1="36" x2="434" y2="36" stroke="#D1CFC5" stroke-width="1.5" marker-end="url(#a2)"/>
+    <defs>
+      <marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#87867F"/>
+      </marker>
+    </defs>
+    <text x="59"  y="31" text-anchor="middle" font-size="12" fill="#3D3D3A" font-weight="500">① 去极值</text>
+    <text x="59"  y="47" text-anchor="middle" font-size="10.5" fill="#87867F">winsorize / _med</text>
+    <text x="203" y="31" text-anchor="middle" font-size="12" fill="#3D3D3A" font-weight="500">② 中性化</text>
+    <text x="203" y="47" text-anchor="middle" font-size="10.5" fill="#87867F">neutralize</text>
+    <text x="347" y="31" text-anchor="middle" font-size="12" fill="#3D3D3A" font-weight="500">③ 标准化</text>
+    <text x="347" y="47" text-anchor="middle" font-size="10.5" fill="#87867F">standardlize</text>
+    <text x="516" y="31" text-anchor="middle" font-size="12" fill="#788C5D" font-weight="600">进入 OLS 的 X</text>
+    <text x="516" y="47" text-anchor="middle" font-size="10.5" fill="#87867F">均值 ≈ 0，std ≈ 1</text>
+  </svg>
+  </div>
+
+  <h3>① 去极值：消除异常值干扰</h3>
+  <p>原始因子值往往有少数极端值（如市净率极高的壳公司），会严重拉偏截面回归。去极值把这些值截断到合理范围，<strong>不是删除，而是压缩到边界</strong>。</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>sigma 法 — <code>winsorize(data, scale=3)</code></h4>
+      <p>计算截面均值 μ 和标准差 σ，将超出 <strong>[μ − 3σ, μ + 3σ]</strong> 的值截断到边界。适合分布接近正态的因子。</p>
+    </div>
+    <div class="card">
+      <h4>MAD 法 — <code>winsorize_med(data, scale=3)</code></h4>
+      <p>以中位数和绝对中位差 MAD 为基准，截断范围为 <strong>[median − 3×MAD, median + 3×MAD]</strong>。对偏态分布、含大量小票的截面更稳健。</p>
+    </div>
+  </div>
+
+  <div class="math-block" id="eq-mad"></div>
+  <ul class="var-list" id="vars-mad"></ul>
+
+  <h3>② 中性化：剥离行业和市值的混淆效应</h3>
+  <p>风格因子（如动量、质量）往往和行业、市值高度相关。若不剥离，OLS 回归出的 beta 并不能干净地代表「风格因子本身的收益」，而是混入了行业或市值的影响。中性化就是把这部分影响回归掉，只保留残差。</p>
+
+  <div class="math-block" id="eq-neutralize"></div>
+  <ul class="var-list" id="vars-neutralize"></ul>
+
+  <pre class="code-block"><span class="cm"># 对行业（申万一级）和对数市值做中性化</span>
+factor_neutralized = <span class="fn">neutralize</span>(
+    factor_raw,
+    how=[<span class="st">'sw_l1'</span>, <span class="st">'ln_mktcap'</span>],
+    date=<span class="st">'2024-01-02'</span>
+)
+<span class="cm"># 返回值是 OLS 残差，即剔除行业和市值影响后的纯因子值</span></pre>
+
+  <h3>③ 标准化：统一量纲</h3>
+  <p>不同因子的量纲完全不同（PE 是倍数，换手率是百分比，市值是亿元），直接放进同一个 OLS 会使 beta 的大小没有可比性。截面 z-score 把每个因子当天的分布统一为均值 0、标准差 1，使各因子的 beta 可以直接比较大小。</p>
+
+  <div class="math-block" id="eq-zscore"></div>
+
+  <div class="callout">
+    <strong>顺序不能乱</strong> —— 必须先去极值再中性化再标准化。若先标准化再去极值，极端值已被压缩进 z-score，去极值效果大打折扣；若先中性化再去极值，残差里的异常值会污染中性化结果。
+  </div>
+
+  <div class="callout info">
+    <strong>行业因子不走这套流程</strong> —— 行业因子是 0/1 虚拟变量（one-hot），本身已无量纲，不需要去极值或标准化。country 因子同理，直接用总仓位比例。
+  </div>
+
+</main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script>
+// ── render named equation blocks ──────────────────────────────────────────
+function display(id, latex) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  katex.render(latex, el, {displayMode: true, throwOnError: false});
+}
+
+function group(id, rows) {
+  // rows: [{latex, note}]
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = rows.map(r => {
+    const math = katex.renderToString(r.latex, {displayMode: false, throwOnError: false});
+    const note = r.note ? `<span class="eq-note">${r.note}</span>` : '';
+    return `<div class="eq-row">${math}${note}</div>`;
+  }).join('');
+}
+
+// ── variable list helper ──────────────────────────────────────────────────
+function varList(id, rows) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = rows.map(({sym, desc, tag}) => {
+    const tagHtml = tag ? `<span class="tag tag-${tag}">${tag.toUpperCase()}</span>` : '';
+    const math = katex.renderToString(sym, {throwOnError: false});
+    return `<li><span class="sym">${math}${tagHtml}</span><span class="desc">${desc}</span></li>`;
+  }).join('');
+}
+
+// ② OLS scalar
+display('eq-ols-scalar',
+  String.raw`r_i(t+1) \;=\; \mathbf{x}_i(t)^\top \,\boldsymbol{\beta}(t) \;+\; \varepsilon_i(t+1)`
+);
+
+varList('vars-ols-scalar', [
+  {sym: 'r_i(t+1)',              tag: 'y', desc: '股票 i 在 T+1 日的收益率（次日涨跌幅），回归的被解释变量'},
+  {sym: '\\mathbf{x}_i(t)',      tag: 'x', desc: '股票 i 在 T 日的因子暴露行向量（K 维，已截面标准化），回归的解释变量'},
+  {sym: '\\boldsymbol{\\beta}(t)',tag: 'b', desc: '因子收益率向量（K 维），OLS 的回归系数，即代码中的 factor_returns'},
+  {sym: '\\varepsilon_i(t+1)',   tag: 'r', desc: '股票 i 的个股特异收益，即无法被因子解释的残差部分'},
+]);
+
+// ② OLS matrix
+group('eq-ols-matrix', [
+  {
+    latex: String.raw`\mathbf{r} = \mathbf{X}\,\boldsymbol{\beta} + \boldsymbol{\varepsilon}`,
+    note: '矩阵形式，r 是 N×1 收益向量，X 是 N×K 因子暴露矩阵'
+  },
+  {
+    latex: String.raw`\hat{\boldsymbol{\beta}} = \bigl(\mathbf{X}^\top \mathbf{X}\bigr)^{-1}\mathbf{X}^\top \mathbf{r}`,
+    note: 'OLS 解，即每日因子收益率 factor_returns'
+  },
+  {
+    latex: String.raw`\hat{\boldsymbol{\varepsilon}}_i = r_i(t+1) - \mathbf{x}_i(t)^\top\hat{\boldsymbol{\beta}}(t)`,
+    note: '个股残差 = 个股特异收益'
+  }
+]);
+
+varList('vars-ols-matrix', [
+  {sym: '\\mathbf{r}',           tag: 'y', desc: 'N×1 收益率向量，N 为全市场股票数量'},
+  {sym: '\\mathbf{X}',           tag: 'x', desc: 'N×K 因子暴露矩阵，行为股票，列为 K 个因子'},
+  {sym: '\\boldsymbol{\\beta}',  tag: 'b', desc: 'K×1 因子收益率向量，OLS 待估参数'},
+  {sym: '\\boldsymbol{\\varepsilon}', tag: 'r', desc: 'N×1 残差向量，每只股票的个股特异收益'},
+]);
+
+// ③ exposure
+display('eq-exposure',
+  String.raw`E_k^{\text{portfolio}}(t) \;=\; \sum_{i} w_i(t)\cdot X_{ik}(t)`
+);
+
+varList('vars-exposure', [
+  {sym: 'E_k^{\\text{portfolio}}(t)', desc: '组合在因子 k 上的暴露，T 日收盘后计算'},
+  {sym: 'w_i(t)',                     desc: '股票 i 在 T 日的持仓权重（0 到 1 之间，所有股票之和 ≤ 1）'},
+  {sym: 'X_{ik}(t)',                  desc: '股票 i 在 T 日的因子 k 值（截面标准化后的暴露值）'},
+  {sym: 'k',                          desc: '因子编号，遍历所有风格因子和行业因子'},
+]);
+
+// ③ country
+display('eq-country',
+  String.raw`E^{\text{country}}(t) \;=\; \sum_{i} w_i(t) \;=\; \text{总仓位比例}`
+);
+
+// ④ daily attribution
+group('eq-attr-daily', [
+  {
+    latex: String.raw`\text{attr}_k(t+1) \;=\; E_k^{\text{portfolio}}(t)\;\cdot\;\hat{\beta}_k(t+1)`,
+    note: '因子 k 对组合的日收益贡献'
+  },
+  {
+    latex: String.raw`\text{common\_return}(t+1) \;=\; \sum_{k} \text{attr}_k(t+1)`,
+    note: '所有因子收益之和'
+  },
+  {
+    latex: String.raw`\text{specific\_return}(t+1) \;=\; r^{\text{portfolio}}(t+1) \;-\; \text{common\_return}(t+1)`,
+    note: '特异收益 = 无法被因子解释的残差'
+  }
+]);
+
+varList('vars-attr-daily', [
+  {sym: '\\text{attr}_k(t+1)',              desc: '因子 k 对组合的日收益贡献'},
+  {sym: 'E_k^{\\text{portfolio}}(t)',       desc: '组合在因子 k 上的暴露（T 日收盘后计算，对应 T+1 日的收益）'},
+  {sym: '\\hat{\\beta}_k(t+1)',             desc: '因子 k 在 T+1 日的收益率（来自平台 API 的截面回归结果）'},
+  {sym: '\\text{common\\_return}(t+1)',     desc: '所有因子（风格 + 行业 + country）贡献之和，即模型可解释的部分'},
+  {sym: 'r^{\\text{portfolio}}(t+1)',       desc: '组合在 T+1 日的实际总收益率（账户真实收益）'},
+  {sym: '\\text{specific\\_return}(t+1)',   desc: '特异收益，总收益中无法被任何因子解释的残差部分'},
+]);
+
+// ④ cumulative
+group('eq-cum-attr', [
+  {
+    latex: String.raw`\text{cum\_attr}_k(T) \;=\; \sum_{t=1}^{T} \text{attr}_k(t)\;\cdot\;\text{NAV}(t-1)`,
+    note: '时间加权累积，近似复利修正'
+  },
+  {
+    latex: String.raw`\text{NAV}(t-1) \;=\; \prod_{s=1}^{t-1}\bigl(1 + r^{\text{total}}(s)\bigr)`,
+    note: '组合净值（T-1 日末）'
+  }
+]);
+
+varList('vars-cum-attr', [
+  {sym: '\\text{cum\\_attr}_k(T)',  desc: '从起始日到第 T 日，因子 k 的累积归因收益'},
+  {sym: '\\text{attr}_k(t)',        desc: '因子 k 在第 t 日的日归因收益（= 暴露 × 因子收益率）'},
+  {sym: '\\text{NAV}(t-1)',         desc: '组合在 t-1 日末的净值，用于将日收益折算为绝对收益贡献'},
+  {sym: 'r^{\\text{total}}(s)',     desc: '组合在第 s 日的实际总收益率'},
+]);
+
+// ⑤ benchmark
+group('eq-bench', [
+  {
+    latex: String.raw`\Delta E_k(t) \;=\; E_k^{\text{portfolio}}(t) \;-\; E_k^{\text{bench}}(t)`,
+    note: '超额暴露'
+  },
+  {
+    latex: String.raw`\Delta\text{attr}_k(t+1) \;=\; \Delta E_k(t)\;\cdot\;\hat{\beta}_k(t+1)`,
+    note: '超额因子收益'
+  },
+  {
+    latex: String.raw`\text{cash}(t+1) \;=\; r^{\text{index}}(t+1)\;\cdot\;\Delta E^{\text{country}}(t)`,
+    note: '仓位不满产生的现金损益'
+  },
+  {
+    latex: String.raw`\Delta\text{specific}(t+1) \;=\; r^{\text{excess}}(t+1) \;-\; \sum_k\Delta\text{attr}_k(t+1) \;-\; \text{cash}(t+1)`,
+    note: '选股 alpha'
+  }
+]);
+
+varList('vars-bench', [
+  {sym: '\\Delta E_k(t)',               desc: '组合相对基准在因子 k 上的超额暴露（组合暴露 − 基准暴露）'},
+  {sym: 'E_k^{\\text{bench}}(t)',       desc: '基准指数（如中证500）在因子 k 上的暴露，由平台 API 获取'},
+  {sym: '\\Delta\\text{attr}_k(t+1)',   desc: '超额因子收益：超额暴露乘以因子收益率'},
+  {sym: 'r^{\\text{index}}(t+1)',       desc: '基准指数在 T+1 日的收益率'},
+  {sym: '\\Delta E^{\\text{country}}(t)', desc: '组合相对基准的仓位差；若基准满仓（country=1）而组合持仓 80%，则 ΔE = 0.8 − 1 = −0.2'},
+  {sym: 'r^{\\text{excess}}(t+1)',      desc: '组合超额收益 = 组合日收益率 − 基准日收益率'},
+  {sym: '\\Delta\\text{specific}(t+1)', desc: '超额特异收益，即超额收益中无法被因子暴露差和现金项解释的部分，为真正的选股 alpha'},
+]);
+
+// ── appendix formulas ────────────────────────────────────────────────────
+display('eq-mad',
+  String.raw`\text{MAD} \;=\; \text{median}\!\bigl(|x_i - \text{median}(x)|\bigr), \quad
+  x_i^{\text{win}} = \text{clip}\!\bigl(x_i,\;\text{med} - 3\cdot\text{MAD},\;\text{med} + 3\cdot\text{MAD}\bigr)`
+);
+varList('vars-mad', [
+  {sym: 'x_i',                  desc: '股票 i 的原始因子值'},
+  {sym: '\\text{median}(x)',    desc: '当日截面中位数'},
+  {sym: '\\text{MAD}',          desc: '绝对中位差，比标准差对异常值更不敏感'},
+  {sym: 'x_i^{\\text{win}}',   desc: '去极值后的因子值，被截断至 [median − 3·MAD, median + 3·MAD]'},
+]);
+
+display('eq-neutralize',
+  String.raw`x_i \;=\; \alpha + \boldsymbol{\gamma}^\top \mathbf{z}_i + \varepsilon_i
+  \;\;\Rightarrow\;\; x_i^{\text{neu}} = \hat{\varepsilon}_i`
+);
+varList('vars-neutralize', [
+  {sym: 'x_i',                      desc: '股票 i 去极值后的因子值（中性化的输入）'},
+  {sym: '\\mathbf{z}_i',            desc: '控制变量向量，通常为行业虚拟变量 + 对数市值'},
+  {sym: '\\boldsymbol{\\gamma}',    desc: '控制变量的回归系数（截面 OLS 估计）'},
+  {sym: 'x_i^{\\text{neu}}',        desc: '中性化后的因子值 = OLS 残差，即剔除行业和市值影响后的纯因子暴露'},
+]);
+
+display('eq-zscore',
+  String.raw`x_i^{*} \;=\; \frac{x_i^{\text{neu}} - \bar{x}}{\sigma_x}`
+);
+
+// ── auto-render inline math in callouts ──────────────────────────────────
+renderMathInElement(document.body, {
+  delimiters: [
+    {left: '\\(', right: '\\)', display: false},
+    {left: '\\[', right: '\\]', display: true}
+  ],
+  throwOnError: false
+});
+
+// ── nav highlight ─────────────────────────────────────────────────────────
+const sections = document.querySelectorAll('h2[id]');
+const links = document.querySelectorAll('nav a');
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const a = document.querySelector('nav a[href="#'+e.target.id+'"]');
+      if (a) a.classList.add('active');
+    }
+  });
+}, {rootMargin:'-30% 0px -60% 0px'});
+sections.forEach(s => io.observe(s));
+
+function copyTldr(btn) {
+  const text = `归因分析 TL;DR：
+① 截面OLS：每日用全市场股票的因子暴露（X）对次日收益率（Y）做截面回归，得到因子收益率（beta）；残差为个股特异收益。
+② 组合暴露 = Σ(持仓权重 × 个股因子值)，T日收盘后计算。
+③ 因子贡献 = 组合暴露(T日) × 因子收益率(T+1日)；特异收益 = 总收益 − 因子贡献之和。
+相对基准时，用超额暴露（组合暴露 − 基准暴露）替换组合暴露即可。`;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '已复制 ✓';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '复制 TL;DR 摘要'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+</script>
+</body>
+</html>
